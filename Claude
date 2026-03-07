@@ -1,0 +1,308 @@
+"""
+svg_gen.py - 幾何学模様SVG自動生成スクリプト
+白背景 × ゴールド線スタイル（X投稿用）
+
+使い方:
+  python svg_gen.py
+  python svg_gen.py --shape hexagon --density 5 --color gold --rotate 30
+  python svg_gen.py --shape circle --density 8 --output my_svg.svg
+  python svg_gen.py --shape triangle --density 4 --stroke-width 1.5
+"""
+
+import argparse
+import math
+import os
+import sys
+
+
+# ===== カラープリセット =====
+COLOR_PRESETS = {
+    "gold":        "#D4AF37",
+    "lightgold":   "#F0D060",
+    "deepgold":    "#B8860B",
+    "silver":      "#C0C0C0",
+    "white":       "#FFFFFF",
+    "rose":        "#C8A08A",
+}
+
+
+def hex_points(cx, cy, r, rotate_deg=0):
+    """六角形の頂点リストを返す"""
+    points = []
+    for i in range(6):
+        angle = math.radians(60 * i + rotate_deg)
+        x = cx + r * math.cos(angle)
+        y = cy + r * math.sin(angle)
+        points.append((x, y))
+    return points
+
+
+def polygon_str(points):
+    return " ".join(f"{x:.3f},{y:.3f}" for x, y in points)
+
+
+# ===== 形状生成関数 =====
+
+def generate_hexagon(width, height, density, stroke_color, stroke_width, rotate):
+    """六角形タイリング"""
+    elements = []
+    r = min(width, height) / (density * 2.2)
+    h_spacing = r * 1.732
+    v_spacing = r * 1.5
+
+    rows = int(height / v_spacing) + 2
+    cols = int(width / h_spacing) + 2
+
+    for row in range(-1, rows + 1):
+        for col in range(-1, cols + 1):
+            cx = col * h_spacing + (h_spacing / 2 if row % 2 else 0)
+            cy = row * v_spacing
+            pts = hex_points(cx, cy, r * 0.9, rotate)
+            elements.append(
+                f'<polygon points="{polygon_str(pts)}" '
+                f'fill="none" stroke="{stroke_color}" stroke-width="{stroke_width:.2f}"/>'
+            )
+    return elements
+
+
+def generate_circle(width, height, density, stroke_color, stroke_width, rotate):
+    """同心円 + グリッド配置"""
+    elements = []
+    spacing = min(width, height) / (density + 1)
+    rings = 3
+
+    cols = int(width / spacing) + 2
+    rows = int(height / spacing) + 2
+
+    for row in range(-1, rows + 1):
+        for col in range(-1, cols + 1):
+            cx = col * spacing
+            cy = row * spacing
+            for k in range(1, rings + 1):
+                r = spacing * 0.45 * (k / rings)
+                elements.append(
+                    f'<circle cx="{cx:.3f}" cy="{cy:.3f}" r="{r:.3f}" '
+                    f'fill="none" stroke="{stroke_color}" stroke-width="{stroke_width:.2f}"/>'
+                )
+    return elements
+
+
+def generate_triangle(width, height, density, stroke_color, stroke_width, rotate):
+    """三角形タイリング"""
+    elements = []
+    size = min(width, height) / (density * 1.5)
+    h = size * math.sqrt(3) / 2
+
+    cols = int(width / size) + 3
+    rows = int(height / h) + 3
+
+    for row in range(-1, rows + 1):
+        for col in range(-1, cols + 1):
+            x0 = col * size - (size / 2 if row % 2 else 0)
+            y0 = row * h
+            # 上向き三角
+            pts_up = [
+                (x0, y0 + h),
+                (x0 + size / 2, y0),
+                (x0 + size, y0 + h),
+            ]
+            # 下向き三角
+            pts_down = [
+                (x0 + size / 2, y0),
+                (x0 + size, y0 + h),
+                (x0 + size * 1.5, y0),
+            ]
+            for pts in [pts_up, pts_down]:
+                # rotate適用
+                cx = sum(p[0] for p in pts) / 3
+                cy = sum(p[1] for p in pts) / 3
+                rad = math.radians(rotate)
+                rotated = [
+                    (
+                        cx + (p[0] - cx) * math.cos(rad) - (p[1] - cy) * math.sin(rad),
+                        cy + (p[0] - cx) * math.sin(rad) + (p[1] - cy) * math.cos(rad),
+                    )
+                    for p in pts
+                ]
+                elements.append(
+                    f'<polygon points="{polygon_str(rotated)}" '
+                    f'fill="none" stroke="{stroke_color}" stroke-width="{stroke_width:.2f}"/>'
+                )
+    return elements
+
+
+def generate_grid(width, height, density, stroke_color, stroke_width, rotate):
+    """格子（グリッド）模様"""
+    elements = []
+    spacing = min(width, height) / (density * 2)
+
+    cols = int(width / spacing) + 2
+    rows = int(height / spacing) + 2
+
+    for col in range(-1, cols + 1):
+        x = col * spacing
+        elements.append(
+            f'<line x1="{x:.3f}" y1="-10" x2="{x:.3f}" y2="{height + 10}" '
+            f'stroke="{stroke_color}" stroke-width="{stroke_width:.2f}"/>'
+        )
+    for row in range(-1, rows + 1):
+        y = row * spacing
+        elements.append(
+            f'<line x1="-10" y1="{y:.3f}" x2="{width + 10}" y2="{y:.3f}" '
+            f'stroke="{stroke_color}" stroke-width="{stroke_width:.2f}"/>'
+        )
+
+    # 斜め格子（rotateで角度）
+    if rotate != 0:
+        diag_spacing = spacing * 1.414
+        for i in range(-cols, cols + rows + 2):
+            x1 = i * diag_spacing
+            elements.append(
+                f'<line x1="{x1:.3f}" y1="-10" '
+                f'x2="{x1 + height + 20:.3f}" y2="{height + 10}" '
+                f'stroke="{stroke_color}" stroke-width="{stroke_width * 0.5:.2f}" opacity="0.4"/>'
+            )
+
+    return elements
+
+
+def generate_star(width, height, density, stroke_color, stroke_width, rotate):
+    """星形（六芒星）タイリング"""
+    elements = []
+    r_outer = min(width, height) / (density * 2.5)
+    r_inner = r_outer * 0.4
+    spacing = r_outer * 2.2
+
+    cols = int(width / spacing) + 2
+    rows = int(height / spacing) + 2
+
+    for row in range(-1, rows + 1):
+        for col in range(-1, cols + 1):
+            cx = col * spacing + (spacing / 2 if row % 2 else 0)
+            cy = row * spacing
+            pts = []
+            for i in range(12):
+                angle = math.radians(30 * i + rotate)
+                r = r_outer if i % 2 == 0 else r_inner
+                pts.append((cx + r * math.cos(angle), cy + r * math.sin(angle)))
+            elements.append(
+                f'<polygon points="{polygon_str(pts)}" '
+                f'fill="none" stroke="{stroke_color}" stroke-width="{stroke_width:.2f}"/>'
+            )
+    return elements
+
+
+SHAPES = {
+    "hexagon":  generate_hexagon,
+    "circle":   generate_circle,
+    "triangle": generate_triangle,
+    "grid":     generate_grid,
+    "star":     generate_star,
+}
+
+
+# ===== SVG生成メイン =====
+
+def generate_svg(shape, width, height, density, color, stroke_width, rotate, output):
+    stroke_color = COLOR_PRESETS.get(color, color)  # プリセット or 直接カラーコード
+
+    gen_func = SHAPES.get(shape)
+    if gen_func is None:
+        print(f"[ERROR] 未対応の形状: {shape}")
+        print(f"使用可能: {', '.join(SHAPES.keys())}")
+        sys.exit(1)
+
+    elements = gen_func(width, height, density, stroke_color, stroke_width, rotate)
+
+    svg_lines = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '
+        f'viewBox="0 0 {width} {height}">',
+        f'  <rect width="{width}" height="{height}" fill="white"/>',
+        f'  <g clip-path="url(#clip)">',
+        f'    <clipPath id="clip">',
+        f'      <rect width="{width}" height="{height}"/>',
+        f'    </clipPath>',
+    ]
+    svg_lines.extend(f'    {el}' for el in elements)
+    svg_lines.append('  </g>')
+    svg_lines.append('</svg>')
+
+    svg_content = "\n".join(svg_lines)
+
+    with open(output, "w", encoding="utf-8") as f:
+        f.write(svg_content)
+
+    print(f"[OK] SVG生成完了: {output}")
+    print(f"     形状={shape}, 密度={density}, 色={stroke_color}, 回転={rotate}°, サイズ={width}x{height}")
+
+
+# ===== CLI =====
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="幾何学模様SVG自動生成スクリプト（白背景×ゴールド線）"
+    )
+    parser.add_argument(
+        "--shape", "-s",
+        default="hexagon",
+        choices=list(SHAPES.keys()),
+        help=f"形状の種類 (default: hexagon) [{', '.join(SHAPES.keys())}]"
+    )
+    parser.add_argument(
+        "--density", "-d",
+        type=int,
+        default=5,
+        help="模様の密度・繰り返し数 (default: 5)"
+    )
+    parser.add_argument(
+        "--color", "-c",
+        default="gold",
+        help=f"線の色 プリセット or #RRGGBB (default: gold) [{', '.join(COLOR_PRESETS.keys())}]"
+    )
+    parser.add_argument(
+        "--stroke-width", "-w",
+        type=float,
+        default=1.2,
+        dest="stroke_width",
+        help="線の太さ (default: 1.2)"
+    )
+    parser.add_argument(
+        "--rotate", "-r",
+        type=float,
+        default=0,
+        help="回転角度（度） (default: 0)"
+    )
+    parser.add_argument(
+        "--width",
+        type=int,
+        default=1200,
+        help="SVG幅px (default: 1200)"
+    )
+    parser.add_argument(
+        "--height",
+        type=int,
+        default=675,
+        help="SVG高さpx (default: 675, X投稿推奨サイズ)"
+    )
+    parser.add_argument(
+        "--output", "-o",
+        default="output.svg",
+        help="出力ファイル名 (default: output.svg)"
+    )
+
+    args = parser.parse_args()
+
+    generate_svg(
+        shape=args.shape,
+        width=args.width,
+        height=args.height,
+        density=args.density,
+        color=args.color,
+        stroke_width=args.stroke_width,
+        rotate=args.rotate,
+        output=args.output,
+    )
+
+
+if __name__ == "__main__":
+    main()

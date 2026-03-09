@@ -32,6 +32,9 @@ python svg_gen.py --shape star --density 6 --color rose --rotate 30
 - Python 3.x（標準ライブラリのみ）
 - Termux（Android）で動作確認済み
 
+![star](images/star.png)
+![hexagon](images/hexagon.png)
+
 ## 作者
 
 [@tomu_ai_dev](https://x.com/tomu_ai_dev)  
